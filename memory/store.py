@@ -4,11 +4,50 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from tools.search import Paper
-from tools.summarize import PaperSummary
+
+
+@dataclass
+class PaperSummary:
+    """Structured summary of a paper — populated by Claude after reading full text."""
+
+    paper_id: str
+    title: str
+    summary: str
+    key_findings: list[str] = field(default_factory=list)
+    methodology: str = ""
+    contributions: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "paper_id": self.paper_id,
+            "title": self.title,
+            "summary": self.summary,
+            "key_findings": self.key_findings,
+            "methodology": self.methodology,
+            "contributions": self.contributions,
+            "limitations": self.limitations,
+            "keywords": self.keywords,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PaperSummary":
+        return cls(
+            paper_id=d["paper_id"],
+            title=d["title"],
+            summary=d.get("summary", ""),
+            key_findings=d.get("key_findings", []),
+            methodology=d.get("methodology", ""),
+            contributions=d.get("contributions", []),
+            limitations=d.get("limitations", []),
+            keywords=d.get("keywords", []),
+        )
 
 _DEFAULT_STORAGE = os.getenv("STORAGE_PATH", "./data")
 

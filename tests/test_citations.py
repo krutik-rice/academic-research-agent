@@ -9,19 +9,19 @@ from tools.search import Paper
 
 
 def _paper(**kwargs) -> Paper:
-    defaults = dict(
-        paper_id="arxiv:1706.03762",
-        title="Attention Is All You Need",
-        authors=["Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit"],
-        abstract="",
-        year=2017,
-        url="https://arxiv.org/abs/1706.03762",
-        pdf_url=None,
-        source="arxiv",
-        doi=None,
-        venue=None,
-        citation_count=None,
-    )
+    defaults = {
+        "paper_id": "arxiv:1706.03762",
+        "title": "Attention Is All You Need",
+        "authors": ["Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit"],
+        "abstract": "",
+        "year": 2017,
+        "url": "https://arxiv.org/abs/1706.03762",
+        "pdf_url": None,
+        "source": "arxiv",
+        "doi": None,
+        "venue": None,
+        "citation_count": None,
+    }
     defaults.update(kwargs)
     return Paper(**defaults)
 
@@ -61,7 +61,7 @@ class TestFormatAPA:
 class TestFormatMLA:
     def test_contains_title_in_quotes(self):
         result = format_mla(_paper())
-        assert '"Attention Is All You Need"' in result
+        assert '"Attention Is All You Need.' in result
 
     def test_contains_year(self):
         assert "2017" in format_mla(_paper())

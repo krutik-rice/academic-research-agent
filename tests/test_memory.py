@@ -5,9 +5,8 @@ from __future__ import annotations
 import pytest
 
 from memory.index import PaperIndex
-from memory.store import PaperStore
+from memory.store import PaperStore, PaperSummary
 from tools.search import Paper
-from tools.summarize import PaperSummary
 
 
 def _paper(paper_id: str = "arxiv:0001.0001", title: str = "Sample Paper") -> Paper:
