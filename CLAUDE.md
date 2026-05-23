@@ -1,69 +1,75 @@
 # Academic Research Agent
 
-An agentic AI assistant that helps with academic research tasks — finding papers, summarizing literature, synthesizing sources, and supporting the research workflow.
+Agentic AI research assistant: searches arXiv + Semantic Scholar, fetches full paper text, summarizes via Claude, formats citations, caches results locally.
 
-## Project Purpose
+## 1. Stack
 
-This agent automates and augments academic research by:
-- Searching and retrieving academic papers (arXiv, Semantic Scholar, PubMed, etc.)
-- Summarizing and extracting key findings from papers
-- Synthesizing literature across multiple sources
-- Generating structured literature reviews and annotated bibliographies
-- Tracking citations and research threads
-- Answering research questions grounded in retrieved sources
+- **Python 3.10+**
+- **anthropic** ≥0.40 — Claude API client, tool-use agentic loop (`claude-sonnet-4-6` default)
+- **requests** — HTTP calls to arXiv and Semantic Scholar REST APIs
+- **pdfplumber** — PDF text extraction
+- **beautifulsoup4 + lxml** — HTML parsing (ar5iv paper pages)
+- **python-dotenv** — `.env` file loading
+- **pytest** — test runner (all tests mock external calls; no real network needed)
+- Storage: plain JSON files on disk (no database)
 
-## Architecture
+## 2. Repo Map
 
 ```
-academic-research-agent/
-├── CLAUDE.md
-├── agent/
-│   ├── __init__.py
-│   ├── core.py          # Main agent loop and orchestration
-│   ├── tools/           # Tool definitions (search, fetch, summarize)
-│   └── prompts/         # System prompts and templates
-├── tools/
-│   ├── search.py        # Academic search APIs (arXiv, Semantic Scholar, etc.)
-│   ├── fetch.py         # PDF/HTML paper retrieval and parsing
-│   ├── summarize.py     # Paper summarization and extraction
-│   └── citations.py     # Citation formatting and tracking
-├── memory/
-│   ├── store.py         # Persistent storage for papers and notes
-│   └── index.py         # Vector index for semantic retrieval
-├── tests/
-└── requirements.txt
+agent/
+  core.py          ResearchAgent class — agentic loop, tool dispatch
+  __main__.py      CLI entry point (python -m agent)
+  prompts/
+    system.py      System prompt string
+  tools/           Claude tool-use JSON schema definitions (one file per tool)
+    search_tool.py
+    fetch_tool.py
+    summarize_tool.py
+    citations_tool.py
+    memory_tool.py
+
+tools/             Actual implementation (called by agent/core.py dispatch)
+  search.py        search_arxiv(), search_semantic_scholar(), search_papers()
+                   Returns list[Paper] dataclass
+  fetch.py         fetch_paper() → PaperContent; tries ar5iv HTML, falls back to PDF
+  summarize.py     summarize_paper() → PaperSummary; calls Claude API separately
+  citations.py     format_citation(paper, style) → str  (apa | mla | bibtex)
+
+memory/
+  store.py         PaperStore — save/get/list Paper and PaperSummary as JSON files
+  index.py         PaperIndex — inverted-index keyword search over saved papers
+
+tests/             pytest suite; all external APIs mocked with unittest.mock
+data/              Runtime paper/summary storage (git-ignored, created on first run)
 ```
 
-## Key Commands
+## 3. Commands
 
 ```bash
-# Install dependencies
+# Install
 pip install -r requirements.txt
 
-# Run the agent interactively
+# Copy and fill in API keys
+cp .env.example .env
+
+# Run interactive CLI
 python -m agent
 
-# Run tests
-pytest tests/
+# Run all tests (no API key needed)
+pytest tests/ -v
+
+# Run with coverage
+pytest tests/ --cov=. --cov-report=term-missing
 ```
 
-## Model
+## 4. Gotchas
 
-Uses the Claude API (`claude-sonnet-4-6` by default). Set `ANTHROPIC_API_KEY` in your environment or a `.env` file.
+- **Two `tools/` directories** — `agent/tools/` holds only Claude JSON schema dicts; `tools/` holds the real code. Never put implementation logic in `agent/tools/`.
+- **`summarize_paper()` makes a second Claude API call** — it is not part of the main agentic loop; it creates its own `anthropic.Anthropic()` client. Costs tokens on every uncached call.
+- **Summary caching** — `_handle_summarize_paper` checks `store.get_summary()` before calling Claude. Don't bypass the cache.
+- **`PaperContent.to_dict()` truncates text** — `text` is capped at 6 000 chars and each section at 2 000 chars before being returned as a tool result. Full text lives in the `PaperContent` object in memory.
+- **arXiv XML namespace** — arXiv Atom feed uses `http://www.w3.org/2005/Atom`; always use the `_ARXIV_NS` constant, never hardcode the string.
+- **`search_papers()` deduplicates by lowercased title** — papers that appear on both arXiv and S2 are collapsed to the first hit.
+- **Paper IDs have source prefix** — arXiv IDs are `arxiv:XXXX.XXXXX`; Semantic Scholar IDs are `s2:<hash>`. File names on disk replace `:` and `/` with `_`.
+- **Environment variables** — `ANTHROPIC_API_KEY` is required. `SEMANTIC_SCHOLAR_API_KEY` is optional but avoids rate-limit 429s on repeated searches.
 
-## Development Guidelines
-
-- Tools must return structured data (dicts/dataclasses), not raw strings
-- All external API calls go through `tools/` — never directly in agent logic
-- Prompts live in `agent/prompts/` — keep them versioned and readable
-- Prefer cited, grounded responses over hallucinated summaries
-- Tests should cover tool outputs and agent decision paths, not just unit functions
-
-## Environment Variables
-
-| Variable | Description |
-|---|---|
-| `ANTHROPIC_API_KEY` | Claude API key (required) |
-| `SEMANTIC_SCHOLAR_API_KEY` | Semantic Scholar API key (optional, higher rate limits) |
-| `ARXIV_BASE_URL` | Override arXiv API base (default: `https://export.arxiv.org/api/`) |
-| `STORAGE_PATH` | Path for local paper/note storage (default: `./data/`) |
