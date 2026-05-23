@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Optional
@@ -10,6 +11,9 @@ from typing import Optional
 import pdfplumber
 import requests
 from bs4 import BeautifulSoup
+
+# pdfminer emits noisy warnings for non-critical PDF quirks; silence them
+logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 _HEADERS = {"User-Agent": "AcademicResearchAgent/1.0 (open-source research tool)"}
 

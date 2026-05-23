@@ -203,34 +203,46 @@ def search_papers(
     """Search for papers across multiple sources, deduplicating by title.
 
     Sources: 'arxiv' (default, free), 'google_scholar' (requires SERPAPI_API_KEY).
+    Results are round-robin interleaved so every source gets fair representation.
     """
     if sources is None:
         sources = ["arxiv", "google_scholar"]
 
-    all_papers: list[Paper] = []
-    seen_titles: set[str] = set()
-    per_source = max(max_results // len(sources), 5)
+    per_source = max(max_results, 5)
+    buckets = [_fetch_source(source, query, per_source) for source in sources]
+    return _interleave(buckets, max_results)
 
-    for source in sources:
-        try:
-            if source == "arxiv":
-                results = search_arxiv(query, per_source)
-            elif source == "google_scholar":
-                results = search_google_scholar(query, per_source)
-            else:
-                print(f"[search] Unknown source '{source}' — skipping.")
+
+def _fetch_source(source: str, query: str, max_results: int) -> list[Paper]:
+    """Fetch papers from a single source, returning [] on failure."""
+    try:
+        if source == "arxiv":
+            return search_arxiv(query, max_results)
+        if source == "google_scholar":
+            return search_google_scholar(query, max_results)
+        print(f"[search] Unknown source '{source}' — skipping.")
+    except Exception as exc:
+        print(f"[search] Warning: {source} failed — {exc}")
+    return []
+
+
+def _interleave(buckets: list[list[Paper]], max_results: int) -> list[Paper]:
+    """Round-robin merge buckets, deduplicating by lowercased title."""
+    result: list[Paper] = []
+    seen: set[str] = set()
+
+    for i in range(max((len(b) for b in buckets), default=0)):
+        for bucket in buckets:
+            if i >= len(bucket):
                 continue
+            key = bucket[i].title.lower().strip()
+            if key not in seen:
+                seen.add(key)
+                result.append(bucket[i])
+                if len(result) >= max_results:
+                    return result
 
-            for paper in results:
-                key = paper.title.lower().strip()
-                if key not in seen_titles:
-                    seen_titles.add(key)
-                    all_papers.append(paper)
-
-        except Exception as exc:
-            print(f"[search] Warning: {source} failed — {exc}")
-
-    return all_papers[:max_results]
+    return result
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

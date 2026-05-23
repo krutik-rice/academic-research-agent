@@ -30,6 +30,9 @@ import argparse
 import json
 import sys
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from memory.index import PaperIndex
 from memory.store import PaperStore
 from tools.citations import format_citation
@@ -58,8 +61,14 @@ def cmd_search(args: argparse.Namespace) -> None:
 def cmd_fetch(args: argparse.Namespace) -> None:
     paper = _store.get_paper(args.paper_id)
     title = paper.title if paper else ""
+    # Use stored pdf_url as fallback when --pdf-url not supplied
+    pdf_url = args.pdf_url or (paper.pdf_url if paper else None)
 
-    content = fetch_paper(args.paper_id, pdf_url=args.pdf_url, title=title)
+    try:
+        content = fetch_paper(args.paper_id, pdf_url=pdf_url, title=title)
+    except ValueError as exc:
+        _err(str(exc))
+        return
     _out(content.to_dict())
 
 
