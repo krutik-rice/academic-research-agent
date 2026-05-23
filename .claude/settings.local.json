@@ -9,7 +9,14 @@
       "Bash(Remove-Item tests/test_summarize.py)",
       "Bash(Remove-Item tests/test_agent.py)",
       "Bash(pip install *)",
-      "Bash(python -m pytest tests/ -v)"
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python research.py --help)",
+      "Bash(python research.py search \"retrieval augmented generation\" --max 5)",
+      "Bash(python research.py fetch arxiv:2411.18583)",
+      "Bash(python research.py cite arxiv:2411.18583 --style bibtex)",
+      "Bash(python research.py cite arxiv:2411.18583 --style apa)",
+      "Bash(python research.py memory list)",
+      "Bash(python research.py memory search \"retrieval augmented\")"
     ]
   }
 }

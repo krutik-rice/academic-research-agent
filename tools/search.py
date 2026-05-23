@@ -1,18 +1,18 @@
-"""Academic paper search across arXiv and Semantic Scholar."""
+"""Academic paper search across arXiv and Google Scholar (via SerpAPI)."""
 
 from __future__ import annotations
 
 import os
-import time
+import re
 import urllib.parse
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import requests
 
 ARXIV_BASE_URL = os.getenv("ARXIV_BASE_URL", "https://export.arxiv.org/api/")
-SEMANTIC_SCHOLAR_BASE_URL = "https://api.semanticscholar.org/graph/v1"
+SERPAPI_BASE_URL = "https://serpapi.com/search"
 _ARXIV_NS = "http://www.w3.org/2005/Atom"
 
 
@@ -61,6 +61,8 @@ class Paper:
             citation_count=d.get("citation_count"),
         )
 
+
+# ── arXiv ─────────────────────────────────────────────────────────────────────
 
 def search_arxiv(query: str, max_results: int = 10) -> list[Paper]:
     """Search arXiv for papers matching query."""
@@ -122,61 +124,88 @@ def search_arxiv(query: str, max_results: int = 10) -> list[Paper]:
     return papers
 
 
-def search_semantic_scholar(query: str, max_results: int = 10) -> list[Paper]:
-    """Search Semantic Scholar for papers."""
-    api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
-    headers = {"x-api-key": api_key} if api_key else {}
+# ── Google Scholar via SerpAPI ────────────────────────────────────────────────
 
-    fields = "paperId,title,authors,year,abstract,url,openAccessPdf,externalIds,venue,citationCount"
-    params = {"query": query, "limit": max_results, "fields": fields}
+def search_google_scholar(query: str, max_results: int = 10) -> list[Paper]:
+    """Search Google Scholar via SerpAPI (requires SERPAPI_API_KEY env var)."""
+    api_key = os.getenv("SERPAPI_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "SERPAPI_API_KEY is not set. Get a free key at https://serpapi.com"
+        )
 
-    response = requests.get(
-        f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/search",
-        params=params,
-        headers=headers,
-        timeout=30,
-    )
+    params = {
+        "engine": "google_scholar",
+        "q": query,
+        "api_key": api_key,
+        "num": min(max_results, 20),
+    }
+
+    response = requests.get(SERPAPI_BASE_URL, params=params, timeout=30)
     response.raise_for_status()
 
     papers: list[Paper] = []
-    for item in response.json().get("data", []):
-        authors = [a.get("name", "") for a in item.get("authors", [])]
+    for item in response.json().get("organic_results", []):
+        title = item.get("title", "")
+        link = item.get("link", "")
+        snippet = item.get("snippet", "")
+        result_id = item.get("result_id", "")
 
+        pub_info = item.get("publication_info", {})
+        summary = pub_info.get("summary", "")
+
+        # Prefer structured author list; fall back to parsing the summary string
+        structured = pub_info.get("authors", [])
+        if structured:
+            authors = [a.get("name", "") for a in structured]
+            year, venue = _year_venue_from_summary(summary)
+        else:
+            authors, year, venue = _parse_publication_summary(summary)
+
+        # Citation count
+        cited_by = item.get("inline_links", {}).get("cited_by", {})
+        citation_count = cited_by.get("total")
+
+        # PDF link from resources list
         pdf_url: Optional[str] = None
-        oa = item.get("openAccessPdf")
-        if oa:
-            pdf_url = oa.get("url")
+        for resource in item.get("resources", []):
+            if resource.get("file_format", "").upper() == "PDF":
+                pdf_url = resource.get("link")
+                break
 
-        doi = (item.get("externalIds") or {}).get("DOI")
+        paper_id = f"scholar:{result_id}" if result_id else f"scholar:{abs(hash(title))}"
 
         papers.append(
             Paper(
-                paper_id=f"s2:{item['paperId']}",
-                title=item.get("title", ""),
+                paper_id=paper_id,
+                title=title,
                 authors=authors,
-                abstract=item.get("abstract") or "",
-                year=item.get("year"),
-                url=item.get("url")
-                or f"https://www.semanticscholar.org/paper/{item['paperId']}",
+                abstract=snippet,
+                year=year,
+                url=link,
                 pdf_url=pdf_url,
-                source="semantic_scholar",
-                doi=doi,
-                venue=item.get("venue"),
-                citation_count=item.get("citationCount"),
+                source="google_scholar",
+                venue=venue,
+                citation_count=citation_count,
             )
         )
 
-    return papers
+    return papers[:max_results]
 
+
+# ── multi-source search ───────────────────────────────────────────────────────
 
 def search_papers(
     query: str,
     sources: list[str] | None = None,
     max_results: int = 10,
 ) -> list[Paper]:
-    """Search for papers across multiple sources, deduplicating by title."""
+    """Search for papers across multiple sources, deduplicating by title.
+
+    Sources: 'arxiv' (default, free), 'google_scholar' (requires SERPAPI_API_KEY).
+    """
     if sources is None:
-        sources = ["arxiv", "semantic_scholar"]
+        sources = ["arxiv", "google_scholar"]
 
     all_papers: list[Paper] = []
     seen_titles: set[str] = set()
@@ -186,10 +215,10 @@ def search_papers(
         try:
             if source == "arxiv":
                 results = search_arxiv(query, per_source)
-            elif source == "semantic_scholar":
-                results = search_semantic_scholar(query, per_source)
-                time.sleep(0.5)
+            elif source == "google_scholar":
+                results = search_google_scholar(query, per_source)
             else:
+                print(f"[search] Unknown source '{source}' — skipping.")
                 continue
 
             for paper in results:
@@ -202,3 +231,42 @@ def search_papers(
             print(f"[search] Warning: {source} failed — {exc}")
 
     return all_papers[:max_results]
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+
+
+def _parse_publication_summary(summary: str) -> tuple[list[str], Optional[int], Optional[str]]:
+    """Parse SerpAPI summary string e.g. 'A Vaswani, N Shazeer - NeurIPS, 2017 - nips.cc'."""
+    if not summary:
+        return [], None, None
+
+    parts = [p.strip() for p in summary.split(" - ")]
+    authors: list[str] = []
+    year: Optional[int] = None
+    venue: Optional[str] = None
+
+    if parts:
+        # First segment: comma-separated author abbreviations
+        raw_authors = parts[0].replace("…", "").strip()
+        authors = [a.strip() for a in raw_authors.split(",") if a.strip()]
+
+    for part in parts[1:]:
+        m = _YEAR_RE.search(part)
+        if m and year is None:
+            year = int(m.group())
+        # Venue is any segment without a dot-domain pattern and not a bare year
+        if not re.search(r"\.\w{2,4}$", part) and not _YEAR_RE.fullmatch(part.strip()):
+            if venue is None:
+                # Strip the year from the venue segment if they share a segment
+                venue = _YEAR_RE.sub("", part).strip().rstrip(",").strip() or None
+
+    return authors, year, venue
+
+
+def _year_venue_from_summary(summary: str) -> tuple[Optional[int], Optional[str]]:
+    """Extract just year and venue when authors are already known."""
+    _, year, venue = _parse_publication_summary(summary)
+    return year, venue

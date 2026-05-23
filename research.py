@@ -131,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--max", type=int, default=10, metavar="N",
                           help="Maximum results (default 10)")
     p_search.add_argument("--sources", nargs="+",
-                          choices=["arxiv", "semantic_scholar"],
+                          choices=["arxiv", "google_scholar"],
                           help="Databases to query (default: both)")
 
     # fetch

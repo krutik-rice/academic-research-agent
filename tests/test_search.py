@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tools.search import Paper, search_arxiv, search_papers, search_semantic_scholar
+from tools.search import Paper, search_arxiv, search_google_scholar, search_papers
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -23,19 +23,28 @@ ARXIV_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
   </entry>
 </feed>"""
 
-S2_JSON = {
-    "data": [
+SERPAPI_JSON = {
+    "organic_results": [
         {
-            "paperId": "abc123def456",
-            "title": "Semantic Scholar Paper Title",
-            "authors": [{"name": "Carol Davis"}, {"name": "Dave Evans"}],
-            "year": 2022,
-            "abstract": "S2 abstract text.",
-            "url": "https://www.semanticscholar.org/paper/abc123def456",
-            "openAccessPdf": {"url": "https://example.com/paper.pdf"},
-            "externalIds": {"DOI": "10.1234/test.2022"},
-            "venue": "NeurIPS",
-            "citationCount": 42,
+            "position": 1,
+            "title": "Attention Is All You Need",
+            "result_id": "RBlwVnwclHoJ",
+            "link": "https://proceedings.neurips.cc/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html",
+            "snippet": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks.",
+            "publication_info": {
+                "summary": "A Vaswani, N Shazeer, N Parmar - Advances in neural…, 2017 - proceedings.neurips.cc",
+                "authors": [
+                    {"name": "Ashish Vaswani", "author_id": "v1"},
+                    {"name": "Noam Shazeer", "author_id": "v2"},
+                    {"name": "Niki Parmar", "author_id": "v3"},
+                ],
+            },
+            "resources": [
+                {"title": "arxiv.org", "file_format": "PDF", "link": "https://arxiv.org/pdf/1706.03762"},
+            ],
+            "inline_links": {
+                "cited_by": {"total": 100345},
+            },
         }
     ]
 }
@@ -81,9 +90,9 @@ class TestSearchArxiv:
         assert "arxiv.org" in papers[0].pdf_url
 
 
-# ── Semantic Scholar ──────────────────────────────────────────────────────────
+# ── Google Scholar via SerpAPI ────────────────────────────────────────────────
 
-class TestSearchSemanticScholar:
+class TestSearchGoogleScholar:
     def _mock_get(self, data: dict):
         resp = MagicMock()
         resp.json.return_value = data
@@ -91,26 +100,43 @@ class TestSearchSemanticScholar:
         return resp
 
     def test_parses_title_and_authors(self):
-        with patch("tools.search.requests.get", return_value=self._mock_get(S2_JSON)):
-            papers = search_semantic_scholar("test")
-        assert papers[0].title == "Semantic Scholar Paper Title"
-        assert "Carol Davis" in papers[0].authors
+        with (
+            patch("tools.search.requests.get", return_value=self._mock_get(SERPAPI_JSON)),
+            patch.dict("os.environ", {"SERPAPI_API_KEY": "test-key"}),
+        ):
+            papers = search_google_scholar("attention")
+        assert papers[0].title == "Attention Is All You Need"
+        assert "Ashish Vaswani" in papers[0].authors
 
-    def test_source_is_semantic_scholar(self):
-        with patch("tools.search.requests.get", return_value=self._mock_get(S2_JSON)):
-            papers = search_semantic_scholar("test")
-        assert papers[0].source == "semantic_scholar"
-        assert papers[0].paper_id.startswith("s2:")
+    def test_source_is_google_scholar(self):
+        with (
+            patch("tools.search.requests.get", return_value=self._mock_get(SERPAPI_JSON)),
+            patch.dict("os.environ", {"SERPAPI_API_KEY": "test-key"}),
+        ):
+            papers = search_google_scholar("attention")
+        assert papers[0].source == "google_scholar"
+        assert papers[0].paper_id.startswith("scholar:")
 
-    def test_citation_count_and_doi(self):
-        with patch("tools.search.requests.get", return_value=self._mock_get(S2_JSON)):
-            papers = search_semantic_scholar("test")
-        assert papers[0].citation_count == 42
-        assert papers[0].doi == "10.1234/test.2022"
+    def test_citation_count_and_pdf(self):
+        with (
+            patch("tools.search.requests.get", return_value=self._mock_get(SERPAPI_JSON)),
+            patch.dict("os.environ", {"SERPAPI_API_KEY": "test-key"}),
+        ):
+            papers = search_google_scholar("attention")
+        assert papers[0].citation_count == 100345
+        assert papers[0].pdf_url == "https://arxiv.org/pdf/1706.03762"
 
-    def test_empty_data_returns_empty_list(self):
-        with patch("tools.search.requests.get", return_value=self._mock_get({"data": []})):
-            papers = search_semantic_scholar("nothing")
+    def test_raises_without_api_key(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(ValueError, match="SERPAPI_API_KEY"):
+                search_google_scholar("test")
+
+    def test_empty_results_returns_empty_list(self):
+        with (
+            patch("tools.search.requests.get", return_value=self._mock_get({"organic_results": []})),
+            patch.dict("os.environ", {"SERPAPI_API_KEY": "test-key"}),
+        ):
+            papers = search_google_scholar("nothing obscure")
         assert papers == []
 
 
@@ -133,18 +159,18 @@ class TestSearchPapers:
         paper = self._make_paper("arxiv:1", "Duplicate Paper", "arxiv")
         with (
             patch("tools.search.search_arxiv", return_value=[paper]),
-            patch("tools.search.search_semantic_scholar", return_value=[paper]),
+            patch("tools.search.search_google_scholar", return_value=[paper]),
         ):
-            results = search_papers("test", sources=["arxiv", "semantic_scholar"])
+            results = search_papers("test", sources=["arxiv", "google_scholar"])
         assert len(results) == 1
 
     def test_skips_failed_source_gracefully(self):
         paper = self._make_paper("arxiv:1", "Good Paper", "arxiv")
         with (
             patch("tools.search.search_arxiv", return_value=[paper]),
-            patch("tools.search.search_semantic_scholar", side_effect=Exception("API down")),
+            patch("tools.search.search_google_scholar", side_effect=Exception("API down")),
         ):
-            results = search_papers("test", sources=["arxiv", "semantic_scholar"])
+            results = search_papers("test", sources=["arxiv", "google_scholar"])
         assert len(results) == 1
 
     def test_respects_max_results(self):
