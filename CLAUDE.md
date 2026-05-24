@@ -17,9 +17,12 @@ Python toolkit for Claude Code: searches arXiv + Google Scholar, fetches full pa
 
 ```
 app.py             Streamlit web UI — run with: streamlit run app.py
-                   Tabs: Search | Library | Fetch Full Text | Citations | Analyze
+                   Sidebar navigation (st.radio) — pages: Search | Library | Fetch Full Text |
+                   Citations | Analyze | Graph
+                   Global header: BibTeX import expander (visible on every page)
                    Library tab: "Find Connected Papers" button + BibTeX import
                    Analyze tab: per-paper analysis + progress tracker + "Find Research Gaps" button
+                   Graph tab: vis.js paper similarity graph (Jaccard keyword overlap)
 
 research.py        Unified CLI — the main entry point for Claude Code to call
                    Subcommands: search | fetch | cite | analyze | memory
@@ -52,6 +55,12 @@ tools/
                    import_from_bib(content, store, index, progress_cb)
                      → ImportResult(imported, skipped, not_found, total)
                      arXiv entries saved from metadata; others searched by title on arXiv
+  graph.py         build_graph(papers, threshold=0.12) → {nodes, edges} for vis.js
+                     edges: Jaccard similarity of title+abstract keyword sets >= threshold
+                     node size scales with citation count (log scale)
+                     node color: arXiv red (#b91c1c), Scholar blue (#2563eb), S2 indigo (#4338ca)
+                   render_html(graph_data) → self-contained HTML string (vis-network 9.1.2 CDN)
+                     rendered via st.components.v1.html() — NOT st.markdown (needs JS execution)
 
 memory/
   store.py         PaperStore — save/get/list/delete Paper + PaperSummary as JSON
@@ -115,3 +124,5 @@ pytest tests/ --cov=. --cov-report=term-missing
 - **`PaperIndex` is lazy** — it builds from disk on the first `search()` call. Call `add_paper()` immediately after saving a new paper so it's searchable in the same session without a full rebuild.
 - **`SERPAPI_API_KEY`** — required for `google_scholar` source; without it that source raises `ValueError` and `search_papers()` prints a warning and continues with arXiv only. Get a free key at serpapi.com (100 free searches/month). `arxiv` source is always free with no key needed.
 - **Streamlit 1.12 compatibility** — `app.py` deliberately avoids APIs added after 1.12: no `st.cache_resource` (use module-level init), no `st.link_button` (use `st.markdown("[text](url)"`), no `label_visibility=`, no `horizontal=True` on radio, no `st.rerun()` (use `st.experimental_rerun()`), no `type="primary"` on `st.form_submit_button`.
+- **vis.js graph requires `st.components.v1.html()`** — `st.markdown` does not execute JavaScript (React blocks injected scripts). Use `components.html(render_html(data), height=640)` for the graph page.
+- **Secrets** — the only secret is `SERPAPI_API_KEY` in `.env`. `.env` is git-ignored. Never hardcode key values in source files; always read from environment variables via `python-dotenv`.
