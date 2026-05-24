@@ -70,6 +70,49 @@ class OllamaClient:
         except Exception:
             return []
 
+    def pull_model(
+        self,
+        model: str,
+        progress_cb: Optional[Callable[[str, int, int], None]] = None,
+    ) -> None:
+        """Stream-pull a model from the Ollama registry.
+
+        progress_cb(status, completed_bytes, total_bytes) is called for each
+        progress chunk.  Raises RuntimeError on failure.
+        """
+        resp = requests.post(
+            f"{self.base_url}/api/pull",
+            json={"name": model, "stream": True},
+            stream=True,
+            timeout=7200,
+        )
+        if resp.status_code == 404:
+            raise RuntimeError(f"Model '{model}' not found in Ollama registry.")
+        resp.raise_for_status()
+        for raw in resp.iter_lines():
+            done = self._handle_pull_line(raw, progress_cb)
+            if done:
+                break
+
+    @staticmethod
+    def _handle_pull_line(
+        raw: bytes,
+        progress_cb: Optional[Callable[[str, int, int], None]],
+    ) -> bool:
+        """Parse one streamed pull line; return True when pull is complete."""
+        if not raw:
+            return False
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return False
+        status    = data.get("status", "")
+        total     = int(data.get("total", 0))
+        completed = int(data.get("completed", 0))
+        if progress_cb:
+            progress_cb(status, completed, total)
+        return status == "success"
+
     def chat(
         self,
         messages: list[dict],
@@ -86,6 +129,11 @@ class OllamaClient:
             },
             timeout=300,
         )
+        if resp.status_code == 404:
+            raise RuntimeError(
+                f"Model '{self.model}' not found. "
+                f"Pull it first: ollama pull {self.model}"
+            )
         resp.raise_for_status()
         return resp.json()["message"]["content"]
 
@@ -182,6 +230,7 @@ class AgentReport:
     gaps:             list[str]   # open problems the paper leaves unresolved
     directions:       list[str]   # suggested follow-up research directions
     competing_work:   list[str]   # papers found that address the same problem
+    sources:          list[str] = field(default_factory=list)  # real URLs from tool observations
 
     def to_dict(self) -> dict:
         return {
@@ -195,6 +244,7 @@ class AgentReport:
             "gaps":             self.gaps,
             "directions":       self.directions,
             "competing_work":   self.competing_work,
+            "sources":          self.sources,
             "steps":            [s.to_dict() for s in self.steps],
         }
 
@@ -294,8 +344,7 @@ class ResearchAgent:
             content = fetch_paper(
                 paper_id, pdf_url=paper.pdf_url, title=paper.title
             )
-        except Exception as exc:
-            # Non-fatal: proceed with abstract only
+        except Exception:
             content = None
 
         paper_context = self._build_paper_context(paper, content)
@@ -315,91 +364,83 @@ class ResearchAgent:
         ]
 
         steps: list[AgentStep] = []
+        seen_urls: list[str] = []
+        url_set: set[str] = set()
 
         for iteration in range(1, self.max_iterations + 1):
             if progress_cb:
-                progress_cb(
-                    iteration - 1,
-                    self.max_iterations,
-                    f"Iteration {iteration}: asking {self.model}…",
-                )
+                progress_cb(iteration - 1, self.max_iterations,
+                            f"Iteration {iteration}: asking {self.model}…")
 
             t0 = time.time()
-            try:
-                response = self.llm.chat(messages)
-            except Exception as exc:
-                raise RuntimeError(f"Ollama call failed: {exc}") from exc
-
+            response = self._chat(messages)
             thought, action, action_input = self._parse_response(response)
             elapsed = time.time() - t0
 
-            # finish ends the loop
             if action == "finish":
                 verdict_data = self._parse_finish(action_input)
-                steps.append(AgentStep(
-                    iteration=iteration,
-                    thought=thought,
-                    action="finish",
-                    action_input=action_input,
-                    observation="Analysis complete.",
-                    elapsed_s=elapsed,
-                ))
+                steps.append(AgentStep(iteration=iteration, thought=thought,
+                                       action="finish", action_input=action_input,
+                                       observation="Analysis complete.", elapsed_s=elapsed))
                 if progress_cb:
                     progress_cb(self.max_iterations, self.max_iterations, "Done")
-                return AgentReport(
-                    paper_id=paper_id,
-                    title=paper.title,
-                    model=self.model,
-                    total_iterations=iteration,
-                    steps=steps,
-                    **verdict_data,
-                )
+                return AgentReport(paper_id=paper_id, title=paper.title,
+                                   model=self.model, total_iterations=iteration,
+                                   steps=steps, sources=seen_urls, **verdict_data)
 
-            # Execute tool and get observation
             if progress_cb:
-                progress_cb(
-                    iteration - 1,
-                    self.max_iterations,
-                    f"Iteration {iteration}: {action}({action_input[:55]}…)",
-                )
+                progress_cb(iteration - 1, self.max_iterations,
+                            f"Iteration {iteration}: {action}({action_input[:55]}…)")
             observation = self._execute_tool(action, action_input, paper, content)
+            self._collect_urls(observation, seen_urls, url_set)
 
-            steps.append(AgentStep(
-                iteration=iteration,
-                thought=thought,
-                action=action,
-                action_input=action_input,
-                observation=observation,
-                elapsed_s=time.time() - t0,
-            ))
-
-            # Append turn to message history so the LLM has full context
+            steps.append(AgentStep(iteration=iteration, thought=thought,
+                                   action=action, action_input=action_input,
+                                   observation=observation, elapsed_s=time.time() - t0))
             messages.append({"role": "assistant", "content": response})
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"Observation:\n{observation[:1800]}\n\n"
-                    "Continue your analysis. You may re-read sections, search "
-                    "for more information, or call finish if you have enough evidence."
-                ),
-            })
+            messages.append({"role": "user", "content": (
+                f"Observation:\n{observation[:1800]}\n\n"
+                "Continue your analysis. You may re-read sections, search "
+                "for more information, or call finish if you have enough evidence."
+            )})
 
-        # Reached max iterations — force a finish
+        return self._forced_finish(messages, steps, paper_id, paper.title, seen_urls,
+                                   progress_cb)
+
+    # ── Private: helpers ──────────────────────────────────────────────────────
+
+    def _chat(self, messages: list[dict]) -> str:
+        try:
+            return self.llm.chat(messages)
+        except Exception as exc:
+            raise RuntimeError(f"Ollama call failed: {exc}") from exc
+
+    @staticmethod
+    def _collect_urls(text: str, seen: list[str], seen_set: set[str]) -> None:
+        for u in re.findall(r"https?://\S+", text):
+            u = u.rstrip(".,)")
+            if u not in seen_set:
+                seen_set.add(u)
+                seen.append(u)
+
+    def _forced_finish(
+        self,
+        messages: list[dict],
+        steps: list[AgentStep],
+        paper_id: str,
+        title: str,
+        seen_urls: list[str],
+        progress_cb: Optional[Callable[[int, int, str], None]],
+    ) -> AgentReport:
         if progress_cb:
-            progress_cb(
-                self.max_iterations,
-                self.max_iterations,
-                "Max iterations reached — synthesizing verdict…",
-            )
-        messages.append({
-            "role": "user",
-            "content": (
-                "You have reached the maximum number of iterations. "
-                "Please provide your final verdict now using the finish action."
-            ),
-        })
+            progress_cb(self.max_iterations, self.max_iterations,
+                        "Max iterations reached — synthesizing verdict…")
+        messages.append({"role": "user", "content": (
+            "You have reached the maximum number of iterations. "
+            "Please provide your final verdict now using the finish action."
+        )})
         t0 = time.time()
-        response = self.llm.chat(messages)
+        response = self._chat(messages)
         thought, action, action_input = self._parse_response(response)
         verdict_data = self._parse_finish(action_input if action == "finish" else response)
         steps.append(AgentStep(
@@ -410,14 +451,9 @@ class ResearchAgent:
             observation="Forced finish after max iterations.",
             elapsed_s=time.time() - t0,
         ))
-        return AgentReport(
-            paper_id=paper_id,
-            title=paper.title,
-            model=self.model,
-            total_iterations=len(steps),
-            steps=steps,
-            **verdict_data,
-        )
+        return AgentReport(paper_id=paper_id, title=title, model=self.model,
+                           total_iterations=len(steps), steps=steps,
+                           sources=seen_urls, **verdict_data)
 
     # ── Private: context builder ───────────────────────────────────────────────
 
@@ -467,21 +503,28 @@ class ResearchAgent:
     def _parse_response(self, text: str) -> tuple[str, str, str]:
         """Extract Thought / Action / Action Input from LLM response.
 
-        Uses regex so it is robust to extra whitespace and surrounding text.
+        Finds each keyword boundary then slices between them — avoids lookahead
+        quantifier patterns that trip static analysis tools.
         """
-        thought_m = re.search(
-            r"Thought\s*:\s*(.*?)(?=Action\s*:)", text, re.DOTALL | re.IGNORECASE
-        )
-        action_m = re.search(
-            r"Action\s*:\s*(.*?)(?=Action\s*Input\s*:)", text, re.DOTALL | re.IGNORECASE
-        )
-        input_m = re.search(
-            r"Action\s*Input\s*:\s*(.*)", text, re.DOTALL | re.IGNORECASE
-        )
+        t_m  = re.search(r"Thought\s*:\s*",      text, re.IGNORECASE)
+        a_m  = re.search(r"\nAction\s*:\s*",      text, re.IGNORECASE)
+        ai_m = re.search(r"\nAction\s*Input\s*:\s*", text, re.IGNORECASE)
 
-        thought      = thought_m.group(1).strip() if thought_m else text[:300]
-        raw_action   = action_m.group(1).strip()  if action_m  else "finish"
-        action_input = input_m.group(1).strip()   if input_m   else ""
+        if t_m and a_m and t_m.end() <= a_m.start():
+            thought = text[t_m.end():a_m.start()].strip()
+        elif t_m:
+            thought = text[t_m.end():].strip()[:300]
+        else:
+            thought = text[:300]
+
+        if a_m and ai_m and a_m.end() <= ai_m.start():
+            raw_action = text[a_m.end():ai_m.start()].strip()
+        elif a_m:
+            raw_action = text[a_m.end():].split("\n")[0].strip()
+        else:
+            raw_action = "finish"
+
+        action_input = text[ai_m.end():].strip() if ai_m else ""
 
         # Normalise action name
         action_map = {
@@ -573,8 +616,11 @@ class ResearchAgent:
         for p in papers[:6]:
             authors = ", ".join(p.authors[:2])
             abstract = (p.abstract or "")[:250]
+            url = ""
+            if p.paper_id and p.paper_id.startswith("arxiv:"):
+                url = f"\n  URL: https://arxiv.org/abs/{p.paper_id[6:]}"
             parts.append(
-                f"• {p.title} ({p.year})\n  {authors}\n  {abstract}"
+                f"• {p.title} ({p.year})\n  {authors}{url}\n  {abstract}"
             )
         return "\n\n".join(parts)
 

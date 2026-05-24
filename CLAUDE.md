@@ -1,128 +1,132 @@
 # Academic Research Agent
 
-Python toolkit for Claude Code: searches arXiv + Google Scholar, fetches full paper text, formats citations, analyzes limitations/future directions, synthesizes research gaps, discovers connected papers via co-citation, and imports from BibTeX. **No Anthropic API key needed** — Claude Code does the reading and reasoning; these tools fetch and parse data.
+Python + React toolkit: searches arXiv + Google Scholar, fetches full paper text, formats citations, analyzes limitations/future directions, synthesizes research gaps, discovers connected papers via co-citation, imports from BibTeX, and runs a local Ollama ReAct agent to assess research viability. **No Anthropic API key needed** — Claude Code is the intelligence layer; these tools fetch and parse data.
 
 ## 1. Stack
 
+**Backend**
 - **Python 3.9+**
+- **FastAPI + uvicorn** — REST API (`api/main.py`); all Streamlit logic replaced
 - **requests** — HTTP calls to arXiv, SerpAPI, and Semantic Scholar REST APIs
 - **pdfplumber** — PDF text extraction
 - **beautifulsoup4 + lxml** — HTML parsing (ar5iv paper pages)
-- **streamlit 1.12** — web UI (`app.py`); note: use only APIs available in 1.12 (no `cache_resource`, no `link_button`, no `label_visibility`, no `horizontal=` on radio, no `st.rerun()` — use `st.experimental_rerun()`, no `st.tabs()` — added in 1.14, use sidebar `st.radio()` navigation instead)
 - **pytest** — test runner (all tests mock external calls; no network needed)
 - Storage: plain JSON files on disk under `./data/` (no database)
-- **SERPAPI_API_KEY** env var — Google Scholar search (free tier: 100 searches/month at serpapi.com)
+- **SERPAPI_API_KEY** env var — Google Scholar + web search (free tier: 100 searches/month)
+
+**Frontend**
+- **Next.js 15 + React** — App Router, TypeScript
+- **Tailwind CSS v4** — utility-first; design tokens in `frontend/app/globals.css`
+- **Node.js 20+** required
 
 ## 2. Repo Map
 
 ```
-app.py             Streamlit web UI — run with: streamlit run app.py
-                   Sidebar navigation (st.radio) — pages: Search | Library | Fetch Full Text |
-                   Citations | Analyze | Graph
-                   Global header: BibTeX import expander (visible on every page)
-                   Library tab: "Find Connected Papers" button + BibTeX import
-                   Analyze tab: per-paper analysis + progress tracker + "Find Research Gaps" button
-                   Graph tab: vis.js paper similarity graph (Jaccard keyword overlap)
+start.py           Starts both servers: python start.py
+                   Backend on :8000, frontend on :3000
 
-research.py        Unified CLI — the main entry point for Claude Code to call
+api/
+  main.py          FastAPI app — all REST endpoints
+                   GET  /api/papers              list library
+                   POST /api/papers/search        search + save
+                   DELETE /api/papers/{id}        delete
+                   POST /api/papers/{id}/fetch    fetch full text
+                   GET  /api/papers/{id}/cite     format citation
+                   POST /api/papers/{id}/analyze  analyze paper
+                   GET  /api/analysis/status      analysis progress
+                   POST /api/analysis/gaps        research gaps (SSE)
+                   POST /api/papers/connected     connected papers (SSE)
+                   POST /api/bib/import           BibTeX import (SSE)
+                   GET  /api/graph                vis.js graph HTML
+                   GET/PUT /api/summaries/{id}    paper summaries
+                   GET  /api/agent/status         Ollama status + models
+                   POST /api/agent/pull           pull model (SSE)
+                   POST /api/agent/run            run ReAct agent (SSE)
+
+frontend/
+  app/
+    layout.tsx     Root layout with Sidebar
+    globals.css    Design tokens (krutikp.com palette: #202124 bg, #8ab4f8 accent)
+    search/        Search arXiv + Scholar
+    library/       Saved papers, BibTeX import, connected papers
+    fetch/         Full text viewer (sections + raw)
+    citations/     APA / MLA / BibTeX formatter
+    analyze/       Per-paper analysis + research gaps finder
+    graph/         vis.js similarity graph (iframe)
+    agent/         Ollama ReAct agent with streaming trace
+  components/
+    Sidebar.tsx    Navigation sidebar
+    PaperCard.tsx  Reusable paper card
+    ui.tsx         Card, Btn, Input, Select, Badge, ProgressBar, Spinner, banners
+  lib/
+    types.ts       Shared TypeScript interfaces
+    api.ts         Typed fetch wrappers + SSE streaming helpers
+
+research.py        Unified CLI (unchanged)
                    Subcommands: search | fetch | cite | analyze | memory
 
 tools/
   search.py        search_arxiv(), search_google_scholar(), search_papers()
-                   → list[Paper]  (Paper is a dataclass with to_dict/from_dict)
-                   google_scholar uses SerpAPI (engine=google_scholar)
   fetch.py         fetch_paper(paper_id, pdf_url) → PaperContent
-                   tries ar5iv HTML first, falls back to PDF
   citations.py     format_citation(paper, style) → str  (apa | mla | bibtex)
   analyze.py       analyze_paper(paper_id, store) → PaperAnalysis
-                   extracts limitations + future_directions from section headings;
-                   falls back to keyword sentence search in Conclusion/Discussion
-  synthesize.py    get_analysis_status(store) → list[dict]
-                     per-paper analyzed/pending status (lim_count, fut_count)
-                   find_research_gaps(store, progress_cb, overlap_fraction=0.75)
-                     → ResearchGapsReport
-                     analyzes all papers; clusters by bigram/trigram themes;
-                     min_papers = max(2, round(overlap_fraction * analyzed_count))
-  connected.py     find_connected_papers(store, max_new, progress_cb)
-                     → (list[Paper], method_str)
-                     pass 1: co-citation — fetches /references for up to 10 arXiv seeds
-                       via Semantic Scholar Graph API; ranks by cross-library frequency
-                     pass 2: S2 recommendations — /recommendations/v1/papers/forpaper/{id}
-                       for up to 5 seeds; fills remaining slots
-                     no API key required; 0.6 s pause per call (~15 calls total)
-  bib.py           parse_bib(content) → list[BibEntry]
-                     regex BibTeX parser; detects arXiv ID from eprint/archiveprefix or URL
-                   import_from_bib(content, store, index, progress_cb)
-                     → ImportResult(imported, skipped, not_found, total)
-                     arXiv entries saved from metadata; others searched by title on arXiv
-  graph.py         build_graph(papers, threshold=0.12) → {nodes, edges} for vis.js
-                     edges: Jaccard similarity of title+abstract keyword sets >= threshold
-                     node size scales with citation count (log scale)
-                     node color: arXiv red (#b91c1c), Scholar blue (#2563eb), S2 indigo (#4338ca)
-                   render_html(graph_data) → self-contained HTML string (vis-network 9.1.2 CDN)
-                     rendered via st.components.v1.html() — NOT st.markdown (needs JS execution)
+  synthesize.py    find_research_gaps(), get_analysis_status()
+  connected.py     find_connected_papers() — co-citation via Semantic Scholar
+  bib.py           parse_bib(), import_from_bib()
+  graph.py         build_graph() → {nodes, edges};  render_html() → vis.js HTML string
+  websearch.py     search_web() — SerpAPI engine=google
+  agent.py         OllamaClient, ResearchAgent (ReAct loop), ensure_ollama_running()
 
 memory/
-  store.py         PaperStore — save/get/list/delete Paper + PaperSummary as JSON
-                   PaperSummary has: limitations, future_directions, key_findings,
-                   methodology, contributions, keywords
-  index.py         PaperIndex — inverted-index keyword search over saved papers
-                   lazy-loads from disk on first search; call add_paper() after saving
+  store.py         PaperStore, PaperSummary
+  index.py         PaperIndex (lazy inverted-index)
 
-tests/             pytest suite; all external APIs mocked — no network calls
-data/              Runtime storage (git-ignored, auto-created on first run)
+tests/             pytest suite; all external APIs mocked
+data/              Runtime storage (git-ignored)
+ollama/            Bundled ollama.exe (git-ignored, Windows only)
 ```
 
 ## 3. Commands
 
 ```bash
-# Install (one-time)
+# Install Python deps (one-time)
 pip install -r requirements.txt
 
-# Run the web UI
-streamlit run app.py
+# Install frontend deps (one-time)
+cd frontend && npm install && cd ..
 
-# Search for papers (saves results to ./data/ automatically)
+# Run both servers together
+python start.py
+# → Backend:  http://localhost:8000
+# → Frontend: http://localhost:3000
+
+# Or run separately:
+python -m uvicorn api.main:app --reload --port 8000
+cd frontend && npm run dev
+
+# CLI (unchanged)
 python research.py search "retrieval augmented generation" --max 8
-python research.py search "diffusion models image" --sources arxiv --max 5
-python research.py search "diffusion models" --sources google_scholar --max 5
-
-# Fetch full text of a paper
 python research.py fetch arxiv:2005.11401
-python research.py fetch arxiv:2005.11401 --pdf-url https://arxiv.org/pdf/2005.11401
-
-# Format a citation (paper must be in local memory from a prior search)
 python research.py cite arxiv:2005.11401 --style bibtex
-python research.py cite arxiv:2005.11401 --style apa
-
-# Extract limitations and future directions from a paper's full text
 python research.py analyze arxiv:2005.11401
-
-# Memory management
 python research.py memory list
-python research.py memory search "transformer attention"
-python research.py memory show arxiv:2005.11401
-python research.py memory delete arxiv:2005.11401
 
-# Run tests
+# Tests
 pytest tests/ -v
-pytest tests/ --cov=. --cov-report=term-missing
 ```
 
 ## 4. Gotchas
 
-- **No API key required** — `anthropic` is not a dependency. Claude Code itself is the intelligence layer; these tools only fetch and format data.
-- **`cite` requires a prior `search`** — `format_citation` reads from `./data/papers/`. If the paper isn't saved yet, run `search` first.
-- **`analyze` requires a prior `search` or known `pdf_url`** — needs metadata from store to resolve pdf_url. arXiv papers always work via ar5iv HTML. Google Scholar papers often fail (no clean HTML), so `method="unavailable"` is returned and the paper is skipped.
-- **`find_research_gaps` overlap threshold** — default 75%: a theme must appear in ≥75% of analyzed papers to surface. For small libraries (≤2 papers analyzed) the minimum is always 2. Adjust via the UI slider or `overlap_fraction` parameter.
-- **`find_research_gaps` skips papers it can't fetch** — check `report.skipped_count`. A library of mostly Google Scholar papers will produce fewer results.
-- **`find_connected_papers` requires arXiv papers** — Semantic Scholar is queried using arXiv IDs. Google Scholar–only libraries return an empty result. Non-arXiv papers returned by S2 get `paper_id = s2:{hash}` and `source = "semantic_scholar"`.
-- **BibTeX import fallback** — entries without an arXiv ID or URL are matched by title search on arXiv. If the title doesn't match exactly, the entry appears in `not_found`. Non-English or highly abbreviated titles often fail to match.
-- **`PaperContent.to_dict()` truncates** — `text` caps at 6 000 chars, each section at 2 000. Full text is in the `PaperContent` object; truncation only applies to JSON output.
-- **arXiv XML namespace** — always use the `_ARXIV_NS` constant in `tools/search.py`, never hardcode `http://www.w3.org/2005/Atom`.
-- **Paper ID format** — arXiv: `arxiv:XXXX.XXXXX`, Google Scholar: `scholar:<result_id>`, Semantic Scholar: `s2:<hash>`. On disk, `:` and `/` are replaced with `_`.
-- **`PaperIndex` is lazy** — it builds from disk on the first `search()` call. Call `add_paper()` immediately after saving a new paper so it's searchable in the same session without a full rebuild.
-- **`SERPAPI_API_KEY`** — required for `google_scholar` source; without it that source raises `ValueError` and `search_papers()` prints a warning and continues with arXiv only. Get a free key at serpapi.com (100 free searches/month). `arxiv` source is always free with no key needed.
-- **Streamlit 1.12 compatibility** — `app.py` deliberately avoids APIs added after 1.12: no `st.cache_resource` (use module-level init), no `st.link_button` (use `st.markdown("[text](url)"`), no `label_visibility=`, no `horizontal=True` on radio, no `st.rerun()` (use `st.experimental_rerun()`), no `type="primary"` on `st.form_submit_button`.
-- **vis.js graph requires `st.components.v1.html()`** — `st.markdown` does not execute JavaScript (React blocks injected scripts). Use `components.html(render_html(data), height=640)` for the graph page.
-- **Secrets** — the only secret is `SERPAPI_API_KEY` in `.env`. `.env` is git-ignored. Never hardcode key values in source files; always read from environment variables via `python-dotenv`.
+- **No Anthropic SDK** — `anthropic` is not a dependency. Never add it.
+- **SSE streaming** — agent run, model pull, gaps, connected papers, and BibTeX import all use Server-Sent Events. Frontend reads via `fetch()` + `ReadableStream`, not `EventSource` (which is GET-only). Backend uses FastAPI `StreamingResponse` with `text/event-stream`.
+- **Ollama auto-start** — `ensure_ollama_running()` launches `ollama serve` silently on first agent run. Model pull happens in-app via the Agent page (no terminal needed). Model files live in `%USERPROFILE%\.ollama\models`, not the project dir.
+- **`cite` requires a prior `search`** — `format_citation` reads from `./data/papers/`. Run search first.
+- **`analyze` requires full text** — arXiv papers work via ar5iv HTML. Google Scholar papers often return `method="unavailable"` and are skipped.
+- **`find_research_gaps` overlap threshold** — default 75%: a theme must appear in ≥75% of analyzed papers. For small libraries (≤2 papers) minimum is always 2.
+- **`find_connected_papers` requires arXiv papers** — queries Semantic Scholar by arXiv ID. Scholar-only libraries return empty.
+- **BibTeX import fallback** — entries without arXiv ID are title-searched on arXiv. Non-English or abbreviated titles often fail to match.
+- **Graph rendered in iframe** — `render_html()` returns a self-contained vis.js HTML string; the Graph page renders it via `<iframe srcDoc={html}>` so JS executes correctly.
+- **Paper ID format** — `arxiv:XXXX.XXXXX`, `scholar:<id>`, `s2:<hash>`. On disk `:` and `/` → `_`.
+- **`PaperContent.to_dict()` truncates** — `text` caps at 6 000 chars, sections at 2 000.
+- **Secrets** — only `SERPAPI_API_KEY` in `.env`. Never hardcode keys.
+- **CORS** — FastAPI allows `http://localhost:3000`. Next.js proxies `/api/*` → `http://localhost:8000/api/*` via `next.config.ts` rewrites.

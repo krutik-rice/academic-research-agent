@@ -42,3 +42,8 @@ Thumbs.db
 
 # Bundled Ollama binary (local only — not published to GitHub)
 ollama/
+
+# Next.js
+frontend/.next/
+frontend/node_modules/
+frontend/out/
