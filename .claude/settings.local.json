@@ -44,7 +44,27 @@
       "Bash(python -c \"import sys,json; print\\(json.load\\(sys.stdin\\)['citation']\\)\")",
       "Bash(python -c \"import sys,json; papers=json.load\\(sys.stdin\\); print\\(f'  {len\\(papers\\)} papers saved'\\); [print\\(f\\\\\"  [{p['source']}] {p['title'][:55]}\\\\\"\\) for p in papers]\")",
       "Bash(python research.py memory search \"chain of thought\" --top 3)",
-      "Bash(python -c \"import sys,json; [print\\(f\\\\\"  {p['title'][:60]}\\\\\"\\) for p in json.load\\(sys.stdin\\)]\")"
+      "Bash(python -c \"import sys,json; [print\\(f\\\\\"  {p['title'][:60]}\\\\\"\\) for p in json.load\\(sys.stdin\\)]\")",
+      "Bash(ls \"C:\\\\Users\\\\kruti\\\\.claude\\\\projects\\\\\" 2>/dev/null || echo \"no projects dir\")",
+      "Read(//c/Users/kruti/.claude/projects\" 2>/dev/**)",
+      "Bash(python -c \"import streamlit; print\\(streamlit.__version__\\)\")",
+      "Bash(streamlit run *)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(Start-Sleep -Seconds 4)",
+      "Bash(Invoke-WebRequest -Uri \"http://localhost:8501\" -UseBasicParsing -TimeoutSec 5)",
+      "Bash(Select-Object -ExpandProperty StatusCode)",
+      "PowerShell(Invoke-WebRequest -Uri \"http://localhost:8501\" -UseBasicParsing -TimeoutSec 10)",
+      "PowerShell(Get-Process -Name \"streamlit\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8501 -ErrorAction SilentlyContinue)",
+      "Bash(python -c \"from playwright.sync_api import sync_playwright; print\\('ok'\\)\")",
+      "PowerShell(pip install playwright -q)",
+      "PowerShell(python -m playwright install chromium 2>&1)",
+      "PowerShell(pip config list)",
+      "PowerShell(pip install \"streamlit==1.14.0\" --index-url https://pypi.org/simple/ -q 2>&1)",
+      "PowerShell(python --version)",
+      "PowerShell(pip --version)",
+      "PowerShell(pip install --no-cache-dir \"streamlit==1.14.0\" 2>&1)",
+      "PowerShell(pip config list -v 2>&1; echo \"---\"; if \\(Test-Path \"$env:APPDATA\\\\pip\\\\pip.ini\"\\) { Get-Content \"$env:APPDATA\\\\pip\\\\pip.ini\" } else { echo \"no pip.ini\" })"
     ]
   }
 }

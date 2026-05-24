@@ -1,0 +1,41 @@
+
+  You can now view your Streamlit app in your browser.
+
+  Network URL: http://10.101.111.161:8501
+  External URL: http://119.82.102.158:8501
+
+2026-05-24 00:10:08.198 Uncaught app exception
+Traceback (most recent call last):
+  File "C:\Users\kruti\AppData\Local\Programs\Python\Python39\lib\site-packages\streamlit\runtime\scriptrunner\script_runner.py", line 556, in _run_script
+    exec(code, module.__dict__)
+  File "C:\Users\kruti\academic-research-agent\app.py", line 26, in <module>
+    @st.cache_resource
+AttributeError: module 'streamlit' has no attribute 'cache_resource'
+2026-05-24 00:14:15.409 Uncaught app exception
+Traceback (most recent call last):
+  File "C:\Users\kruti\AppData\Local\Programs\Python\Python39\lib\site-packages\streamlit\runtime\scriptrunner\script_runner.py", line 556, in _run_script
+    exec(code, module.__dict__)
+  File "C:\Users\kruti\academic-research-agent\app.py", line 106, in <module>
+    submitted = st.form_submit_button("Search", type="primary")
+TypeError: form_submit_button() got an unexpected keyword argument 'type'
+2026-05-24 00:14:48.177 Uncaught app exception
+Traceback (most recent call last):
+  File "C:\Users\kruti\AppData\Local\Programs\Python\Python39\lib\site-packages\streamlit\runtime\scriptrunner\script_runner.py", line 556, in _run_script
+    exec(code, module.__dict__)
+  File "C:\Users\kruti\academic-research-agent\app.py", line 154, in <module>
+    lib_query = st.text_input(
+TypeError: text_input() got an unexpected keyword argument 'label_visibility'
+2026-05-24 00:16:23.372 Uncaught app exception
+Traceback (most recent call last):
+  File "C:\Users\kruti\AppData\Local\Programs\Python\Python39\lib\site-packages\streamlit\runtime\scriptrunner\script_runner.py", line 556, in _run_script
+    exec(code, module.__dict__)
+  File "C:\Users\kruti\academic-research-agent\app.py", line 197, in <module>
+    if st.button("Fetch full text", type="primary", key="fetch_btn"):
+TypeError: button() got an unexpected keyword argument 'type'
+2026-05-24 12:20:31.462 Uncaught app exception
+Traceback (most recent call last):
+  File "C:\Users\kruti\AppData\Local\Programs\Python\Python39\lib\site-packages\streamlit\runtime\scriptrunner\script_runner.py", line 556, in _run_script
+    exec(code, module.__dict__)
+  File "C:\Users\kruti\academic-research-agent\app.py", line 19, in <module>
+    from tools.synthesize import find_research_gaps, get_analysis_status
+ImportError: cannot import name 'get_analysis_status' from 'tools.synthesize' (C:\Users\kruti\academic-research-agent\tools\synthesize.py)

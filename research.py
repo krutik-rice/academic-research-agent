@@ -34,7 +34,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from memory.index import PaperIndex
-from memory.store import PaperStore
+from memory.store import PaperStore, PaperSummary
+from tools.analyze import analyze_paper
 from tools.citations import format_citation
 from tools.fetch import fetch_paper
 from tools.search import search_papers
@@ -82,6 +83,31 @@ def cmd_cite(args: argparse.Namespace) -> None:
 
     citation = format_citation(paper, style=args.style)
     _out({"paper_id": args.paper_id, "style": args.style, "citation": citation})
+
+
+# ── analyze ───────────────────────────────────────────────────────────────────
+
+def cmd_analyze(args: argparse.Namespace) -> None:
+    analysis = analyze_paper(args.paper_id, store=_store)
+
+    if analysis.method == "unavailable":
+        _err(f"Could not fetch or parse paper '{args.paper_id}'.")
+        return
+
+    result = analysis.to_dict()
+
+    # Persist into PaperSummary so the UI can read cached analyses
+    existing = _store.get_summary(args.paper_id)
+    summary = existing or PaperSummary(
+        paper_id=args.paper_id,
+        title=analysis.title,
+        summary="",
+    )
+    summary.limitations = analysis.limitations
+    summary.future_directions = analysis.future_directions
+    _store.save_summary(summary)
+
+    _out(result)
 
 
 # ── memory ────────────────────────────────────────────────────────────────────
@@ -156,6 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
                         choices=["apa", "mla", "bibtex"],
                         help="Citation style (default: apa)")
 
+    # analyze
+    p_analyze = sub.add_parser("analyze", help="Extract limitations and future directions")
+    p_analyze.add_argument("paper_id", help="Paper ID (e.g. arxiv:2005.11401)")
+
     # memory
     p_mem = sub.add_parser("memory", help="Manage locally saved papers")
     mem_sub = p_mem.add_subparsers(dest="memory_cmd", required=True)
@@ -184,6 +214,7 @@ def main() -> None:
         "search": cmd_search,
         "fetch": cmd_fetch,
         "cite": cmd_cite,
+        "analyze": cmd_analyze,
         "memory": cmd_memory,
     }
     dispatch[args.command](args)

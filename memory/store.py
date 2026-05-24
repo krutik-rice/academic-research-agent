@@ -22,6 +22,7 @@ class PaperSummary:
     methodology: str = ""
     contributions: list[str] = field(default_factory=list)
     limitations: list[str] = field(default_factory=list)
+    future_directions: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -33,6 +34,7 @@ class PaperSummary:
             "methodology": self.methodology,
             "contributions": self.contributions,
             "limitations": self.limitations,
+            "future_directions": self.future_directions,
             "keywords": self.keywords,
         }
 
@@ -46,6 +48,7 @@ class PaperSummary:
             methodology=d.get("methodology", ""),
             contributions=d.get("contributions", []),
             limitations=d.get("limitations", []),
+            future_directions=d.get("future_directions", []),
             keywords=d.get("keywords", []),
         )
 
