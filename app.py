@@ -20,6 +20,7 @@ from tools.synthesize import find_research_gaps, get_analysis_status
 from tools.connected import find_connected_papers
 from tools.bib import import_from_bib
 from tools.graph import build_graph, render_html
+from tools.agent import ResearchAgent, OllamaClient
 from memory.store import PaperStore, PaperSummary
 from memory.index import PaperIndex
 import streamlit.components.v1 as components
@@ -40,32 +41,196 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Tailwind-inspired CSS: uses Tailwind's exact color palette values
+# krutikp.com design language — dark theme, Roboto, #8ab4f8 accent, rounded-xl surfaces
 st.markdown("""
 <style>
-/* Metric card — subtle border + rounded corners, no bg override (dark-mode safe) */
-[data-testid="metric-container"] {
-    border: 1px solid rgba(128, 128, 128, 0.25) !important;
-    border-radius: 0.5rem !important;
-    padding: 0.75rem 1rem !important;
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
+
+/* ── Global font ── */
+html, body, [class*="css"], .stApp, .stMarkdown, p, span, div {
+    font-family: 'Roboto', 'Segoe UI', system-ui, sans-serif !important;
 }
-/* Source + status badges — Tailwind color palette */
+
+/* ── Selection ── */
+::selection { background-color: #1a73e8; color: #fff; }
+
+/* ── Dividers ── */
+hr { border-color: rgba(255,255,255,0.08) !important; margin: 1rem 0 !important; }
+
+/* ── Headings ── */
+h1 { font-weight: 300 !important; letter-spacing: -0.01em !important; color: #e8eaed !important; }
+h2, h3 { font-weight: 400 !important; letter-spacing: 0.01em !important; color: #e8eaed !important; }
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background-color: #292a2d !important;
+    border-right: 1px solid rgba(255,255,255,0.08) !important;
+}
+[data-testid="stSidebar"] .stRadio > label {
+    font-size: 0.6rem !important;
+    letter-spacing: 0.25em !important;
+    text-transform: uppercase !important;
+    color: #9aa0a6 !important;
+}
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
+    border-radius: 0.5rem !important;
+    transition: color 0.2s !important;
+}
+[data-testid="stSidebar"] .stProgress > div > div > div > div {
+    background-color: #8ab4f8 !important;
+}
+[data-testid="stSidebar"] .stProgress > div > div > div {
+    background-color: rgba(255,255,255,0.1) !important;
+    border-radius: 999px !important;
+}
+
+/* ── Metric cards ── */
+[data-testid="metric-container"] {
+    background-color: #292a2d !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 0.75rem !important;
+    padding: 0.85rem 1.1rem !important;
+}
+[data-testid="metric-container"] label {
+    font-size: 0.6rem !important;
+    letter-spacing: 0.2em !important;
+    text-transform: uppercase !important;
+    color: #9aa0a6 !important;
+}
+[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    font-weight: 300 !important;
+    font-size: 1.8rem !important;
+    color: #e8eaed !important;
+}
+
+/* ── Buttons ── */
+.stButton > button {
+    background-color: transparent !important;
+    border: 1px solid rgba(138,180,248,0.35) !important;
+    border-radius: 0.75rem !important;
+    color: #8ab4f8 !important;
+    font-family: 'Roboto', sans-serif !important;
+    font-size: 0.8rem !important;
+    font-weight: 500 !important;
+    padding: 0.45rem 1.1rem !important;
+    transition: background 0.2s, border-color 0.2s !important;
+}
+.stButton > button:hover {
+    background-color: rgba(138,180,248,0.1) !important;
+    border-color: #8ab4f8 !important;
+}
+.stButton > button:active {
+    background-color: rgba(138,180,248,0.18) !important;
+}
+
+/* ── Form submit button ── */
+.stFormSubmitButton > button {
+    background-color: rgba(138,180,248,0.1) !important;
+    border: 1px solid rgba(138,180,248,0.4) !important;
+    border-radius: 0.75rem !important;
+    color: #8ab4f8 !important;
+    font-size: 0.8rem !important;
+    font-weight: 500 !important;
+    transition: all 0.2s !important;
+}
+.stFormSubmitButton > button:hover {
+    background-color: rgba(138,180,248,0.18) !important;
+    border-color: #8ab4f8 !important;
+}
+
+/* ── Expanders ── */
+.streamlit-expanderHeader {
+    background-color: #292a2d !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 0.75rem !important;
+    color: #bdc1c6 !important;
+    font-size: 0.85rem !important;
+    transition: color 0.2s !important;
+}
+.streamlit-expanderHeader:hover { color: #8ab4f8 !important; }
+.streamlit-expanderContent {
+    background-color: #292a2d !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-top: none !important;
+    border-radius: 0 0 0.75rem 0.75rem !important;
+}
+
+/* ── Text inputs ── */
+.stTextInput > div > div > input {
+    background-color: #292a2d !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 0.75rem !important;
+    color: #e8eaed !important;
+    font-family: 'Roboto', sans-serif !important;
+}
+.stTextInput > div > div > input:focus {
+    border-color: #8ab4f8 !important;
+    box-shadow: 0 0 0 2px rgba(138,180,248,0.2) !important;
+}
+.stTextInput > div > div > input::placeholder { color: #9aa0a6 !important; }
+
+/* ── Selectbox / Multiselect ── */
+.stSelectbox > div > div,
+.stMultiSelect > div > div {
+    background-color: #292a2d !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: 0.75rem !important;
+}
+
+/* ── Sliders ── */
+.stSlider > div > div > div > div {
+    background-color: #8ab4f8 !important;
+}
+
+/* ── Progress bars (non-sidebar) ── */
+.stProgress > div > div > div > div {
+    background-color: #8ab4f8 !important;
+    border-radius: 999px !important;
+}
+.stProgress > div > div > div {
+    background-color: rgba(255,255,255,0.1) !important;
+    border-radius: 999px !important;
+}
+
+/* ── Captions ── */
+small, .stCaption {
+    color: #9aa0a6 !important;
+    font-size: 0.75rem !important;
+}
+
+/* ── Alert / info / warning / success boxes ── */
+.stAlert {
+    background-color: #292a2d !important;
+    border-radius: 0.75rem !important;
+    border-left: 3px solid rgba(138,180,248,0.5) !important;
+}
+
+/* ── File uploader ── */
+.stFileUploader {
+    background-color: #292a2d !important;
+    border: 1px dashed rgba(138,180,248,0.3) !important;
+    border-radius: 0.75rem !important;
+}
+
+/* ── Source + status badges ── */
 .badge {
     display: inline-block;
-    padding: 0.125rem 0.5rem;
+    padding: 0.1rem 0.5rem;
     border-radius: 0.25rem;
-    font-size: 0.75rem;
+    font-size: 0.6rem;
     font-weight: 700;
+    font-family: 'Roboto', sans-serif;
     color: #fff;
-    letter-spacing: 0.025em;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
     margin-right: 0.25rem;
     vertical-align: middle;
 }
-.badge-arxiv   { background-color: #b91c1c; }  /* red-700   */
-.badge-scholar { background-color: #2563eb; }  /* blue-600  */
-.badge-s2      { background-color: #4338ca; }  /* indigo-700*/
-.badge-done    { background-color: #16a34a; }  /* green-600 */
-.badge-pending { background-color: #9ca3af; }  /* gray-400  */
+.badge-arxiv   { background-color: #b91c1c; }
+.badge-scholar { background-color: #2563eb; }
+.badge-s2      { background-color: #4338ca; }
+.badge-done    { background-color: #16a34a; }
+.badge-pending { background-color: rgba(255,255,255,0.12); color: #9aa0a6; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -108,6 +273,7 @@ with st.sidebar:
             "📝 Citations",
             "🔬 Analyze",
             "🕸 Graph",
+            "🤖 Agent",
         ],
     )
 
@@ -819,3 +985,216 @@ elif page == "🕸 Graph":
             components.html(render_html(graph_data), height=640, scrolling=False)
         else:
             st.info("Click **Build Graph** to generate the visualization.")
+
+
+# ── page: agent ───────────────────────────────────────────────────────────────
+
+elif page == "🤖 Agent":
+    st.subheader("Research Viability Agent")
+
+    # ── How it works explainer ────────────────────────────────────────────────
+    with st.expander("How this agent works", expanded=False):
+        st.markdown("""
+**ReAct (Reason + Act)** is the pattern this agent uses. Each iteration:
+
+1. **Thought** — The LLM reasons about what it knows and what it needs to find out.
+2. **Action** — It picks one of four tools:
+   - `read_section` — re-reads a section of the paper (intro, conclusion, limitations…)
+   - `search_web` — searches the general web via SerpAPI for recent news and discussion
+   - `search_arxiv` — searches arXiv for academic papers that might solve the same problem
+   - `finish` — delivers the final verdict as structured JSON
+3. **Observation** — The tool runs and returns a result, which is added to the LLM's context.
+
+The agent **revisits the same paper multiple times** — each re-read is informed by what
+web and arXiv searches revealed, deepening the analysis with each pass.
+
+The final verdict is one of: `worth_pursuing` · `partially_covered` · `well_covered` · `unclear`
+        """)
+
+    # ── Ollama status ─────────────────────────────────────────────────────────
+    _ollama = OllamaClient(model="llama3.1")
+    _ollama_ok = _ollama.is_available()
+
+    st.markdown(
+        '<span class="badge badge-done">Ollama ✓ online</span>'
+        if _ollama_ok else
+        '<span class="badge badge-pending">Ollama ✗ offline</span>',
+        unsafe_allow_html=True,
+    )
+
+    if not _ollama_ok:
+        st.error(
+            "Ollama is not running. Start it in a terminal with: `ollama serve`  \n"
+            "Then pull a model: `ollama pull llama3.1`"
+        )
+    else:
+        models_available = _ollama.list_models()
+        if models_available:
+            st.caption(f"Available models: {', '.join(models_available)}")
+
+    st.markdown("---")
+
+    if not _all_papers:
+        st.info("Add papers to your library first (use **🔍 Search** or import a BibTeX file).")
+    else:
+        # ── Configuration ─────────────────────────────────────────────────────
+        col_paper, col_iter = st.columns([3, 1])
+        with col_paper:
+            agent_paper = st.selectbox(
+                "Select paper to analyze",
+                options=_all_papers,
+                format_func=lambda p: f"{p.paper_id} — {p.title[:65]}",
+                key="agent_paper_select",
+            )
+        with col_iter:
+            agent_iters = st.slider(
+                "Max iterations",
+                min_value=3, max_value=8, value=5,
+                key="agent_iters",
+            )
+
+        run_agent = st.button(
+            "Run Agent",
+            key="agent_run_btn",
+            disabled=(not _ollama_ok),
+        )
+
+        if run_agent and agent_paper:
+            agent_bar    = st.progress(0)
+            agent_status = st.empty()
+
+            def _agent_progress(current: int, total: int, msg: str) -> None:
+                agent_bar.progress(current / total if total else 1.0)
+                agent_status.caption(msg[:80])
+
+            try:
+                researcher = ResearchAgent(
+                    model="llama3.1",
+                    max_iterations=agent_iters,
+                )
+                report = researcher.run(
+                    agent_paper.paper_id,
+                    store=store,
+                    progress_cb=_agent_progress,
+                )
+                agent_bar.empty()
+                agent_status.empty()
+                st.session_state["agent_report"] = report
+            except Exception as exc:
+                agent_bar.empty()
+                agent_status.empty()
+                st.error(f"Agent failed: {exc}")
+
+        # ── Report display ────────────────────────────────────────────────────
+        report = st.session_state.get("agent_report")
+        if report is not None:
+            st.markdown("---")
+
+            # Verdict badge
+            _VERDICT_STYLE = {
+                "worth_pursuing":    ("badge-done",    "Worth Pursuing ✓"),
+                "partially_covered": ("badge-scholar", "Partially Covered"),
+                "well_covered":      ("badge-arxiv",   "Well Covered ✗"),
+                "unclear":           ("badge-pending", "Unclear"),
+            }
+            v_cls, v_label = _VERDICT_STYLE.get(
+                report.verdict, ("badge-pending", report.verdict.replace("_", " ").title())
+            )
+            conf_pct = round(report.confidence * 100)
+
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Verdict", v_label)
+            r2.metric("Confidence", f"{conf_pct}%")
+            r3.metric("Iterations", report.total_iterations)
+
+            st.markdown(
+                f'<span class="badge {v_cls}">{v_label}</span> '
+                f'<span style="color:#9aa0a6;font-size:0.75rem;">confidence</span>',
+                unsafe_allow_html=True,
+            )
+            st.progress(report.confidence)
+
+            st.markdown("#### Reasoning")
+            st.markdown(report.reasoning)
+
+            # Gaps + directions
+            if report.gaps or report.directions:
+                gc, dc = st.columns(2)
+                with gc:
+                    st.markdown("#### Open Gaps")
+                    if report.gaps:
+                        for g in report.gaps:
+                            st.markdown(f"- {g}")
+                    else:
+                        st.caption("None identified.")
+                with dc:
+                    st.markdown("#### Research Directions")
+                    if report.directions:
+                        for d in report.directions:
+                            st.markdown(f"- {d}")
+                    else:
+                        st.caption("None identified.")
+
+            # Competing work
+            if report.competing_work:
+                st.markdown("#### Competing / Related Work Found")
+                for c in report.competing_work:
+                    st.markdown(f"- {c}")
+
+            # Step-by-step trace
+            st.markdown("---")
+            st.markdown("#### Agent Trace")
+            st.caption(
+                f"Model: {report.model} · "
+                f"{report.total_iterations} iterations · "
+                "Expand each step to see the full Thought / Action / Observation"
+            )
+
+            _ACTION_BADGE = {
+                "search_web":    ("badge-scholar", "🌐 search_web"),
+                "search_arxiv":  ("badge-arxiv",   "📄 search_arxiv"),
+                "read_section":  ("badge-s2",      "📖 read_section"),
+                "finish":        ("badge-done",     "✓ finish"),
+            }
+
+            for step in report.steps:
+                a_cls, a_label = _ACTION_BADGE.get(
+                    step.action, ("badge-pending", step.action)
+                )
+                header = (
+                    f"Iteration {step.iteration} · "
+                    f"<span class='badge {a_cls}'>{a_label}</span> "
+                    f"<code>{step.action_input[:55]}{'…' if len(step.action_input) > 55 else ''}</code> "
+                    f"<span style='color:#9aa0a6;font-size:0.7rem;'>({step.elapsed_s:.1f}s)</span>"
+                )
+                with st.expander(f"Iteration {step.iteration} — {step.action}({step.action_input[:40]}…)", expanded=False):
+                    st.markdown("**Thought**")
+                    st.markdown(step.thought)
+                    st.markdown(
+                        f"**Action** &nbsp; <span class='badge {a_cls}'>{a_label}</span>",
+                        unsafe_allow_html=True,
+                    )
+                    st.code(step.action_input, language="text")
+                    st.markdown("**Observation**")
+                    st.text(step.observation[:800])
+
+            # Save button
+            st.markdown("---")
+            if st.button("Save analysis to library", key="agent_save_btn"):
+                existing = store.get_summary(report.paper_id)
+                summary = existing or PaperSummary(
+                    paper_id=report.paper_id,
+                    title=report.title,
+                    summary="",
+                )
+                summary.summary           = report.reasoning
+                summary.limitations       = report.gaps
+                summary.future_directions = report.directions
+                store.save_summary(summary)
+                st.success(
+                    "Saved to library. View it on the **🔬 Analyze** page."
+                )
+
+            if st.button("Clear", key="agent_clear_btn"):
+                st.session_state["agent_report"] = None
+                st.experimental_rerun()
