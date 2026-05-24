@@ -39,3 +39,6 @@ coverage.xml
 # OS
 .DS_Store
 Thumbs.db
+
+# Bundled Ollama binary (local only — not published to GitHub)
+ollama/

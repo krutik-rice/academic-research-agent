@@ -26,11 +26,15 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Optional
 
 import requests
+
+_OLLAMA_DEFAULT_URL = "http://localhost:11434"
 
 from memory.store import PaperStore, PaperSummary
 from tools.fetch import fetch_paper, PaperContent
@@ -46,7 +50,7 @@ class OllamaClient:
     def __init__(
         self,
         model: str = "llama3.1",
-        base_url: str = "http://localhost:11434",
+        base_url: str = _OLLAMA_DEFAULT_URL,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
@@ -84,6 +88,59 @@ class OllamaClient:
         )
         resp.raise_for_status()
         return resp.json()["message"]["content"]
+
+
+# ── Server lifecycle ──────────────────────────────────────────────────────────
+
+def _find_ollama_binary() -> str:
+    """Return the path to the ollama executable.
+
+    Prefers the binary bundled under <project_root>/ollama/ so the project
+    is self-contained.  Falls back to whatever is on the system PATH.
+    """
+    # Walk up from this file's directory to find the project root
+    project_root = Path(__file__).parent.parent
+    for candidate in [
+        project_root / "ollama" / "ollama.exe",   # Windows bundled
+        project_root / "ollama" / "ollama",        # macOS/Linux bundled
+    ]:
+        if candidate.is_file():
+            return str(candidate)
+    return "ollama"  # fall back to system PATH
+
+
+def ensure_ollama_running(
+    ollama_url: str = _OLLAMA_DEFAULT_URL,
+    timeout: float = 20.0,
+) -> bool:
+    """Start `ollama serve` in the background if not already running.
+
+    Tries the binary bundled at <project>/ollama/ollama[.exe] first,
+    then falls back to the system PATH.
+    Returns True once the server is reachable, False if it could not start.
+    """
+    client = OllamaClient(base_url=ollama_url)
+    if client.is_available():
+        return True
+
+    binary = _find_ollama_binary()
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        subprocess.Popen(
+            [binary, "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+        )
+    except FileNotFoundError:
+        return False
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(1.0)
+        if client.is_available():
+            return True
+    return False
 
 
 # ── Data structures ───────────────────────────────────────────────────────────
@@ -206,7 +263,7 @@ class ResearchAgent:
         self,
         model: str = "llama3.1",
         max_iterations: int = 5,
-        ollama_url: str = "http://localhost:11434",
+        ollama_url: str = _OLLAMA_DEFAULT_URL,
     ) -> None:
         self.llm = OllamaClient(model=model, base_url=ollama_url)
         self.model = model
@@ -413,13 +470,13 @@ class ResearchAgent:
         Uses regex so it is robust to extra whitespace and surrounding text.
         """
         thought_m = re.search(
-            r"Thought\s*:\s*(.*?)(?=Action\s*:|$)", text, re.DOTALL | re.IGNORECASE
+            r"Thought\s*:\s*(.*?)(?=Action\s*:)", text, re.DOTALL | re.IGNORECASE
         )
         action_m = re.search(
-            r"Action\s*:\s*(.*?)(?=Action\s*Input\s*:|$)", text, re.DOTALL | re.IGNORECASE
+            r"Action\s*:\s*(.*?)(?=Action\s*Input\s*:)", text, re.DOTALL | re.IGNORECASE
         )
         input_m = re.search(
-            r"Action\s*Input\s*:\s*(.*?)$", text, re.DOTALL | re.IGNORECASE
+            r"Action\s*Input\s*:\s*(.*)", text, re.DOTALL | re.IGNORECASE
         )
 
         thought      = thought_m.group(1).strip() if thought_m else text[:300]
